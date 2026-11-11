@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ridelay"
+version = "0.1.0"
+description = "GPX telemetry -> transparent (alpha channel) overlay video for action-cam footage"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "skia-python>=87.5",
+    "numpy>=1.22",
+    "typer>=0.9",
+    "imageio-ffmpeg>=0.4.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+ridelay = "ridelay.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
