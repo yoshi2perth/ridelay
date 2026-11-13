@@ -34,6 +34,7 @@ class RenderConfig:
     map_scope: str = "full"           # full | segment
     map_width: float = 440.0          # 1080p 基準のピクセル
     map_height: float = 560.0
+    interpolate_metrics: bool = False # 数値表示をフレーム間で補間するか
     text_color: int = 0xFFFFFFFF
     outline_color: int = 0xB4000000
     dot_color: int = 0xFF3DDC97

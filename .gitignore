@@ -8,4 +8,6 @@ out/
 *.webm
 *.png
 activity_*.gpx
+activity_*.tcx
+.DS_Store
 

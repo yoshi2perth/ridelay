@@ -14,8 +14,9 @@ from rich.progress import (BarColumn, MofNCompleteColumn, Progress, TextColumn,
 from rich.table import Table
 
 from . import encoder
+from .activity import GpxError, TcxError, load_activity
 from .config import RenderConfig, parse_color
-from .gpx_parser import GpxError, parse_gpx
+from .gpx_parser import parse_gpx
 from .processing import FIELDS, Telemetry, available_fields, build_telemetry
 from .render import default_jobs, render_video
 from .renderer import Renderer
@@ -28,7 +29,7 @@ except ImportError:  # pragma: no cover
     from typing_extensions import Annotated
 
 app = typer.Typer(
-    help="GPX のテレメトリーを、アルファチャネル付きの透過動画として描画します。",
+    help="GPX / TCX のテレメトリーを、アルファチャネル付きの透過動画として描画します。",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -49,7 +50,8 @@ class MapScope(str, Enum):
 
 # ---------------------------------------------------------------- 共通オプション
 
-GpxArg = Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="GPX ファイル")]
+ActivityArg = Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="GPX または TCX ファイル")]
+GpxArg = ActivityArg
 SizeOpt = Annotated[str, typer.Option("--size", "-s", help="出力解像度 (3840x2160 / 4k / 2.7k / 1080p)")]
 FpsOpt = Annotated[str, typer.Option("--fps", "-r", help="フレームレート (30, 60, 29.97 など)")]
 StartOpt = Annotated[Optional[str], typer.Option(
@@ -73,6 +75,10 @@ MapColorOpt = Annotated[str, typer.Option("--map-color", help="コース線の�
 FontOpt = Annotated[Optional[str], typer.Option("--font", help="フォント名 または .ttf/.otf のパス")]
 SmoothOpt = Annotated[float, typer.Option("--smooth", help="速度の平滑化 (秒)")]
 PowerSmoothOpt = Annotated[float, typer.Option("--power-smooth", help="パワーの平滑化 (秒, 3 = 3秒平均)")]
+InterpolateMetricsOpt = Annotated[bool, typer.Option(
+    "--interpolate-metrics", "--smooth-metrics",
+    help="数値表示を1秒ごとの固定更新ではなく、フレーム間で線形補間して滑らかに表示する",
+)]
 
 
 def _fail(msg: str) -> "typer.Exit":
@@ -80,9 +86,9 @@ def _fail(msg: str) -> "typer.Exit":
     return typer.Exit(code=1)
 
 
-def _load(gpx: Path, smooth: float, power_smooth: float) -> Telemetry:
+def _load(activity_file: Path, smooth: float, power_smooth: float) -> Telemetry:
     try:
-        points = parse_gpx(gpx)
+        points = load_activity(activity_file)
     except GpxError as e:
         raise _fail(str(e))
     return build_telemetry(points, smooth_speed=smooth, smooth_power=power_smooth)
@@ -105,7 +111,7 @@ def _resolve_range(tel: Telemetry, start: Optional[str], end: Optional[str],
     if e <= s:
         raise _fail("終了位置が開始位置より前です")
     if s < 0 or s > tel.duration:
-        console.print(f"[yellow]注意:[/] 開始位置が GPX の記録範囲外です "
+        console.print(f"[yellow]注意:[/] 開始位置がアクティビティの記録範囲外です "
                       f"(記録は 0:00:00 〜 {format_hms(tel.duration)})")
     return s, e
 
@@ -114,7 +120,8 @@ def _build_config(tel: Telemetry, size: str, fps: str, start: Optional[str], end
                   duration: Optional[str], weight: Optional[float], fields: str,
                   no_gauge: bool, no_map: bool, map_scope: MapScope, map_size: str,
                   scale: float, max_speed: float, text_color: str, dot_color: str,
-                  map_color: str, font: Optional[str], quiet: bool = False) -> RenderConfig:
+                  map_color: str, font: Optional[str], interpolate_metrics: bool = False,
+                  quiet: bool = False) -> RenderConfig:
     try:
         w, h = parse_size(size)
         fps_v = parse_fps(fps)
@@ -144,7 +151,8 @@ def _build_config(tel: Telemetry, size: str, fps: str, start: Optional[str], end
     return RenderConfig(
         width=w, height=h, fps=fps_v, start_s=s, end_s=e, fields=ok_fields, weight=weight,
         scale=scale, max_speed=max_speed, show_gauge=not no_gauge, show_map=not no_map,
-        map_scope=map_scope.value, map_width=mw, map_height=mh, **colors, **font_kw,
+        map_scope=map_scope.value, map_width=mw, map_height=mh,
+        interpolate_metrics=interpolate_metrics, **colors, **font_kw,
     )
 
 
@@ -177,13 +185,14 @@ def render(
     font: FontOpt = None,
     smooth: SmoothOpt = 3.0,
     power_smooth: PowerSmoothOpt = 3.0,
+    interpolate_metrics: InterpolateMetricsOpt = False,
     jobs: Annotated[int, typer.Option("--jobs", "-j", help="並列プロセス数")] = default_jobs(),
 ) -> None:
-    """GPX からアルファ付きのオーバーレイ動画を書き出す."""
+    """GPX / TCX からアルファ付きのオーバーレイ動画を書き出す."""
     tel = _load(gpx, smooth, power_smooth)
     cfg = _build_config(tel, size, fps, start, end, duration, weight, fields, no_gauge, no_map,
                         map_scope, map_size, scale, max_speed, text_color, dot_color,
-                        map_color, font)
+                        map_color, font, interpolate_metrics=interpolate_metrics)
     out = output or gpx.with_name(gpx.stem + "_overlay" + encoder.EXTENSIONS[fmt.value])
     if fmt != Format.png and out.suffix.lower() != encoder.EXTENSIONS[fmt.value]:
         console.print(f"[yellow]注意:[/] {fmt.value} の推奨拡張子は {encoder.EXTENSIONS[fmt.value]} です")
@@ -194,6 +203,7 @@ def render(
         f"{float(cfg.fps):g}fps, {format_hms(cfg.duration)}, {total} フレーム, jobs={jobs})[/]"
     )
     console.print(f"[bold]表示:[/] {', '.join(cfg.fields) or '(数値なし)'}"
+                  f"{' (滑らか補間)' if cfg.interpolate_metrics else ''}"
                   f"{' + ゲージ' if cfg.show_gauge else ''}{' + マップ' if cfg.show_map else ''}")
 
     t0 = time.time()
@@ -239,12 +249,13 @@ def preview(
     font: FontOpt = None,
     smooth: SmoothOpt = 3.0,
     power_smooth: PowerSmoothOpt = 3.0,
+    interpolate_metrics: InterpolateMetricsOpt = False,
 ) -> None:
     """1 フレームだけ PNG に書き出して見た目を確認する."""
     tel = _load(gpx, smooth, power_smooth)
     cfg = _build_config(tel, size, "30", start, end, duration, weight, fields, no_gauge, no_map,
                         map_scope, map_size, scale, max_speed, text_color, dot_color,
-                        map_color, font)
+                        map_color, font, interpolate_metrics=interpolate_metrics)
     try:
         ts = parse_time_spec(at, tel.start) if at else cfg.start_s
         bg = parse_color(background) if background else None
@@ -256,7 +267,7 @@ def preview(
 
 @app.command()
 def info(gpx: GpxArg) -> None:
-    """GPX の概要 (記録時間・含まれるデータ) を表示する."""
+    """GPX / TCX の概要 (記録時間・含まれるデータ) を表示する."""
     import numpy as np
 
     tel = _load(gpx, 3.0, 3.0)

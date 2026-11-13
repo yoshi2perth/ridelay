@@ -115,3 +115,35 @@ def test_fps_and_size():
     assert float(parse_fps("60")) == 60
     assert parse_size("4k") == (3840, 2160)
     assert parse_size("2704x1520") == (2704, 1520)
+
+
+def test_metrics_text_interpolation():
+    from ridelay.config import RenderConfig
+    from ridelay.widgets import MetricsText, load_typeface
+
+    # パワーが徐々に変化するデータを作成 (t=0: 100W, t=1: 200W, t=2: 300W)
+    t0 = datetime(2026, 11, 3, tzinfo=timezone.utc)
+    pts = [
+        TrackPoint(time=t0 + timedelta(seconds=i), lat=36.0 + i * 0.0001, lon=140.0,
+                   power=100.0 + i * 100.0)
+        for i in range(10)
+    ]
+    tel = build_telemetry(pts, smooth_power=1.0)
+    # t=1 で 200, t=2 で 300
+    tel.power[1] = 200.0
+    tel.power[2] = 300.0
+
+    # 1. デフォルト (interpolate_metrics=False) -> held
+    cfg_held = RenderConfig(weight=50.0, interpolate_metrics=False)
+    metrics_held = MetricsText(cfg_held, load_typeface(cfg_held), ["power", "wkg"])
+    # ts = 1.5 のとき、held は t=1 の値 (200W) を保持
+    assert metrics_held.format("power", tel, 1.5) == "200"
+    assert metrics_held.format("wkg", tel, 1.5) == "4.0"
+
+    # 2. 補間あり (interpolate_metrics=True) -> interp
+    cfg_interp = RenderConfig(weight=50.0, interpolate_metrics=True)
+    metrics_interp = MetricsText(cfg_interp, load_typeface(cfg_interp), ["power", "wkg"])
+    # ts = 1.5 のとき、線形補間で 250W
+    assert metrics_interp.format("power", tel, 1.5) == "250"
+    assert metrics_interp.format("wkg", tel, 1.5) == "5.0"
+

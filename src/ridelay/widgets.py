@@ -140,11 +140,18 @@ class MetricsText:
         self.line_height = 72 * u
 
     def format(self, field: str, tel: Telemetry, ts: float) -> str:
-        if field == "wkg":
-            p = tel.held("power", ts)
-            v = p / self.cfg.weight if self.cfg.weight else float("nan")
+        if self.cfg.interpolate_metrics:
+            if field == "wkg":
+                p = float(tel.interp("power", ts))
+                v = p / self.cfg.weight if self.cfg.weight else float("nan")
+            else:
+                v = float(tel.interp(field, ts))
         else:
-            v = tel.held(field, ts)
+            if field == "wkg":
+                p = tel.held("power", ts)
+                v = p / self.cfg.weight if self.cfg.weight else float("nan")
+            else:
+                v = tel.held(field, ts)
         if not math.isfinite(v):
             return "--"
         if field in ("speed", "wkg"):

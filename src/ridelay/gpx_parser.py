@@ -122,3 +122,4 @@ def parse_gpx(path: "str | Path") -> List[TrackPoint]:
     if len(dedup) < 2:
         raise GpxError("時刻の異なるトラックポイントが 2 点以上必要です")
     return dedup
+
